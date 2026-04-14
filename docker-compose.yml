@@ -1,0 +1,21 @@
+#version: '3.8'
+
+# servis tanımı ve build
+services:
+  edge_ai_ros2:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: jetson_pipeline_dev
+    
+    # canlı kod senkronizasyonu
+    volumes:
+      - ./:/workspace
+      
+    # ROS 2 DDS HABERLEŞME VE AĞ MİMARİSİ
+    network_mode: "host"
+    ipc: host
+    
+    # interaktif terminal çalışması için
+    tty: true
+    stdin_open: true
