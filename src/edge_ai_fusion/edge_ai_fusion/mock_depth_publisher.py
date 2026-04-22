@@ -27,11 +27,23 @@ class MockDepthPublisher(Node):
         msg.encoding = '16UC1'
         msg.step = msg.width * 2  # 2 bytes per pixel for 16-bit
 
-        # Simulated depth data (mock — real sensor data in hardware phase)
-        msg.data = (np.random.randint(0, 65535, msg.height * msg.width, dtype=np.uint16)).tobytes()
+        # Controlled test pattern
+        data = np.full((720, 1280), 5000, dtype=np.uint16)  # all FAR
 
+        data[0:360,   640:1280] = 5000   # top right  → FAR (>300mm)
+        data[360:720, 0:640]    = 150    # bottom left → VALID (50-300mm)
+        data[300:420, 480:800]  = 150    # center      → VALID (50-300mm)
+
+        msg.data = data.tobytes()
         self.publisher.publish(msg)
         self.get_logger().info('Depth frame published')
+
+
+        # Simulated depth data (mock — real sensor data in hardware phase)
+        #msg.data = (np.random.randint(0, 65535, msg.height * msg.width, dtype=np.uint16)).tobytes()
+
+      #  self.publisher.publish(msg)
+       # self.get_logger().info('Depth frame published')
 
 def main(args=None):
     rclpy.init(args=args)

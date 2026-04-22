@@ -8,7 +8,7 @@ class SensorFusionNode(Node):
     def __init__(self):
         super().__init__('sensor_fusion_node')
 
-        # Thermal camera subscriber (~9Hz)
+        # Thermal camera subscriber (~25Hz)
         self.thermal_sub = Subscriber(self, Image, '/thermal/image_raw')
 
         # RealSense D435 depth subscriber (~30Hz)
@@ -18,7 +18,7 @@ class SensorFusionNode(Node):
         self.sync = ApproximateTimeSynchronizer(
             [self.thermal_sub, self.depth_sub],
             queue_size=10,
-            slop=0.12
+            slop=0.06
         )
         self.sync.registerCallback(self.process_fusion)
 
