@@ -1,0 +1,51 @@
+# UTi721M Thermal Camera - ROS2 Driver Configuration
+# Device:UNI-T UTi721M
+
+thermal_camera_driver_node:
+  ros__parameters:
+    # Device path
+    device: /dev/video0
+    # Split-frame mode: 256x384 (top=visual, bottom=raw16 temperature data)
+    frame_width: 256
+    frame_height: 384
+    fps: 25.0
+    frame_id: thermal_camera
+    # Topics
+    topic_image_raw: /thermal/image_raw
+    topic_image_raw16: /thermal/image_raw16
+    # Field of view (UTi721M specific)
+    fov_horizontal: 56.0
+    fov_vertical: 42.2
+
+temperature_map_node:
+  ros__parameters:
+    # Topics
+    input_topic: /thermal/image_raw16
+    output_topic: /thermal/temperature_map
+    # Calibration formula: T(C) = raw16 / 64.0 - 273.15
+    # Validated: room=25.7C, hand=34.7C, lighter=118.9C
+    calib_divisor: 64.0
+    calib_offset: 273.15
+    # Temperature range (UTi721M specific)
+    temp_min: -20.0
+    temp_max: 550.0
+    # Distance correction: T_corrected = T_measured + (distance_m * 1.0)
+    # -0.5C per 0.5m (1.0 C/m correction factor)
+    distance_correction_factor: 1.0
+    # Visualization
+    colormap: JET
+    output_width: 512
+    output_height: 384
+
+fake_thermal_publisher:
+  ros__parameters:
+    frame_width: 256
+    frame_height: 192
+    fps: 25.0
+    topic_name: /thermal/image_raw
+    frame_id: thermal_camera
+    encoding: mono8
+    temp_min_threshold: -20.0
+    temp_max_threshold: 550.0
+    fov_horizontal: 56.0
+    fov_vertical: 42.2

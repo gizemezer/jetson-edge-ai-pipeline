@@ -1,0 +1,13 @@
+.vscode/browse.vc.db
+.vscode/ipch/
+build/
+install/
+log/
+*.pyc
+__pycache__/
+bags/
+*.db3
+*.yaml.bak
+videos/
+videos/
+*.save.*
