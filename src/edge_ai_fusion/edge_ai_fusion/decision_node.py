@@ -12,8 +12,11 @@ from cv_bridge import CvBridge
 
 THERMAL_HOT       = 45.0
 THERMAL_DANGEROUS = 60.0
+
+#Test
 #DEPTH_TOO_CLOSE   = 50
 #DEPTH_MAX_VALID   = 300
+
 DEPTH_TOO_CLOSE   = 30
 DEPTH_MAX_VALID   = 1500
 
