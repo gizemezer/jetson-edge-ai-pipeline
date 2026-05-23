@@ -1,11 +1,11 @@
 import rclpy
 from rclpy.node import Node
 from diagnostic_msgs.msg import DiagnosticArray
-from std_msgs.msg import Float32
 import numpy as np
 import csv
 import os
 from datetime import datetime
+from edge_ai_interfaces.msg import Latency
 
 STABILITY_THRESHOLD = 0.08
 MEASURE_SEC         = 60
@@ -20,25 +20,28 @@ class PowerBenchmarkNode(Node):
 
         self.declare_parameter('power_mode', '7W')
         self.power_mode = self.get_parameter('power_mode').get_parameter_value().string_value
-
-        self.csv_path = f'/workspace/logs/power_benchmark_{self.power_mode}.csv'
+        self.csv_path   = f'/workspace/logs/power_benchmark_{self.power_mode}.csv'
 
         self.subscription = self.create_subscription(
             DiagnosticArray, '/system_monitor', self.monitor_cb, 10)
-        self.latency_sub = self.create_subscription(
-            Float32, '/decision/latency', self.latency_cb, 10)
+        self.latency_sub  = self.create_subscription(
+            Latency, '/decision/latency_detail', self.latency_cb, 10)
 
-        self.current_data   = []
-        self.latency_data   = []
-        self.phase          = 'idle'
-        self.run_idx        = 0
+        self.latest_latency = {
+            'acq_ms': None, 'process_ms': None,
+            'transport_ms': None, 'decision_ms': None, 'e2e_ms': None}
+
+        self.current_data = []
+        self.phase        = 'idle'
+        self.run_idx      = 0
 
         os.makedirs('/workspace/logs', exist_ok=True)
         self.csv_file   = open(self.csv_path, 'w', newline='')
         self.csv_writer = csv.writer(self.csv_file)
         self.csv_writer.writerow([
             'timestamp', 'power_mode', 'phase', 'run',
-            'cpu', 'gpu', 'ram_used', 'ram_total', 'power_mw', 'temp', 'latency_ms'])
+            'cpu', 'gpu', 'ram_used', 'ram_total', 'power_mw', 'temp',
+            'acq_ms', 'process_ms', 'transport_ms', 'decision_ms', 'e2e_ms'])
 
         self.timer       = self.create_timer(0.1, self.run_benchmark)
         self.started     = False
@@ -49,12 +52,16 @@ class PowerBenchmarkNode(Node):
         data = {kv.key: (float(kv.value) if kv.value != 'N/A' else None)
                 for s in msg.status for kv in s.values}
         data['timestamp'] = datetime.now().isoformat()
-        data['latency_ms'] = self.latency_data[-1] if self.latency_data else None
         if self.phase != 'idle':
             self.current_data.append(data)
 
-    def latency_cb(self, msg):
-        self.latency_data.append(msg.data)
+    def latency_cb(self, msg: Latency):
+        self.latest_latency = {
+            'acq_ms'      : msg.acq_ms,
+            'process_ms'  : msg.process_ms,
+            'transport_ms': msg.transport_ms,
+            'decision_ms' : msg.decision_ms,
+            'e2e_ms'      : msg.e2e_ms}
 
     def get_vals(self, data, key):
         return [d[key] for d in data if d.get(key) is not None]
@@ -70,19 +77,20 @@ class PowerBenchmarkNode(Node):
     def log_csv(self, phase, run=0):
         if not self.current_data:
             return
-        d = self.current_data[-1]
+        d  = self.current_data[-1]
+        lt = self.latest_latency
         self.csv_writer.writerow([
             d.get('timestamp'), self.power_mode, phase, run,
             d.get('cpu_percent'), d.get('gpu_percent'),
             d.get('ram_used_mb'), d.get('ram_total_mb'),
             d.get('power_mw'), d.get('temp_cpu_c'),
-            d.get('latency_ms')])
+            lt['acq_ms'], lt['process_ms'],
+            lt['transport_ms'], lt['decision_ms'], lt['e2e_ms']])
         self.csv_file.flush()
 
     def _next_phase(self, phase):
         self.phase        = phase
         self.current_data = []
-        self.latency_data = []
         self.phase_start  = self.get_clock().now()
 
     def run_benchmark(self):
@@ -90,7 +98,8 @@ class PowerBenchmarkNode(Node):
             self.started     = True
             self.phase_start = self.get_clock().now()
             self._next_phase('warmup')
-            self.get_logger().info(f'[{self.power_mode}] Warmup started (threshold: {STABILITY_THRESHOLD*100:.0f}%)...')
+            self.get_logger().info(
+                f'[{self.power_mode}] Warmup started (threshold: {STABILITY_THRESHOLD*100:.0f}%)...')
             return
 
         elapsed = (self.get_clock().now() - self.phase_start).nanoseconds / 1e9
@@ -121,10 +130,7 @@ class PowerBenchmarkNode(Node):
             self.log_csv('cooldown')
             if elapsed >= COOLDOWN_SEC:
                 self.csv_file.close()
-                self.get_logger().info(
-                    f'[{self.power_mode}] Done. CSV: {self.csv_path}')
-                self.get_logger().info(
-                    'done all of this')
+                self.get_logger().info(f'[{self.power_mode}] Done. CSV: {self.csv_path}')
                 raise SystemExit
 
     def destroy_node(self):
