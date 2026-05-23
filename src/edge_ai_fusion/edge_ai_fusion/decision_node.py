@@ -1,6 +1,6 @@
 import rclpy
 from rclpy.node import Node
-from edge_ai_interfaces.msg import FusedData
+from edge_ai_interfaces.msg import FusedData, Latency
 from sensor_msgs.msg import Image
 from std_msgs.msg import String, Float32
 import numpy as np
@@ -34,7 +34,8 @@ class DecisionNode(Node):
             FusedData, '/fused/output_v2', self.decision_callback, 10)
         self.bitmap_pub  = self.create_publisher(Image,   '/decision/thermal_bitmap', 10)
         self.alert_pub   = self.create_publisher(String,  '/decision/alert',          10)
-        self.latency_pub = self.create_publisher(Float32, '/decision/latency',        10)
+        self.latency_detail_pub = self.create_publisher(
+            Latency, '/decision/latency_detail', 10)
 
         self.previous_regions = {}
 
@@ -198,10 +199,50 @@ class DecisionNode(Node):
                 if k in current_region_ids}
 
         # --- 7. PUBLISH LATENCY ---
+        # t_decision_in: callback'e giriş
+        t_decision_in = self.get_clock().now()
+
+        # ... mevcut tüm işlemler aynı kalıyor ...
+
+        # alert publish'ten sonra:
+        t_decision_out = self.get_clock().now()
+
+        @staticmethod
+        def _to_ns(stamp):
+            return stamp.sec * 1_000_000_000 + stamp.nanosec
+
+        t_cap_ns   = self._to_ns(fused_msg.t_capture)
+        t_fin_ns   = self._to_ns(fused_msg.t_fusion_in)
+        t_fout_ns  = self._to_ns(fused_msg.t_fusion_out)
+        t_din_ns   = t_decision_in.nanoseconds
+        t_dout_ns  = t_decision_out.nanoseconds
+
+        acq_ms      = (t_fin_ns  - t_cap_ns)  / 1e6
+        process_ms  = (t_fout_ns - t_fin_ns)  / 1e6
+        transport_ms= (t_din_ns  - t_fout_ns) / 1e6
+        decision_ms = (t_dout_ns - t_din_ns)  / 1e6
+        e2e_ms      = (t_dout_ns - t_cap_ns)  / 1e6
+
+        self.get_logger().info(
+            f'[LAT] acq={acq_ms:.1f} process={process_ms:.1f} '
+            f'transport={transport_ms:.1f} decision={decision_ms:.1f} '
+            f'E2E={e2e_ms:.1f} ms')
+
+        # Float32 — e2e (calibration_node için)
         latency_msg      = Float32()
-        latency_msg.data = float(latency_ms)
+        latency_msg.data = float(e2e_ms)
         self.latency_pub.publish(latency_msg)
-        self.get_logger().debug(f'Latency: {latency_ms:.2f}ms')
+
+        # Latency.msg — tüm aşamalar (power_benchmark için)
+        lat_detail              = Latency()
+        lat_detail.header.stamp = self.get_clock().now().to_msg()
+        lat_detail.frame_seq    = fused_msg.frame_seq
+        lat_detail.acq_ms       = float(acq_ms)
+        lat_detail.process_ms   = float(process_ms)
+        lat_detail.transport_ms = float(transport_ms)
+        lat_detail.decision_ms  = float(decision_ms)
+        lat_detail.e2e_ms       = float(e2e_ms)
+        self.latency_detail_pub.publish(lat_detail)
 
     def destroy_node(self):
         self.csv_file.close()
