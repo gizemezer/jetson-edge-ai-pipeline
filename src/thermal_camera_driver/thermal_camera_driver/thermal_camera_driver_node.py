@@ -32,7 +32,8 @@ class ThermalCameraDriver(Node):
         if not ret:
             self.get_logger().error('Failed to capture frame!')
             return
-        
+            
+        t_capture = self.get_clock().now().to_msg()
         # Üst yarı: Renkli görsel verinin Y kanalı (Gri tonlama)
         top_y = frame[0:192, :, 0]
         top_bgr = cv2.cvtColor(top_y, cv2.COLOR_GRAY2BGR)
