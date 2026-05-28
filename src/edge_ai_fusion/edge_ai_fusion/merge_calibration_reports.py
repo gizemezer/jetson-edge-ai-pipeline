@@ -4,12 +4,12 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 from matplotlib import rcParams
 
+# ── Akademik Tez Formatı ──
 rcParams.update({
-    'font.family': 'serif', 'font.size': 9,
-    'axes.titlesize': 10, 'axes.labelsize': 9,
+    'font.family': 'serif', 'font.size': 10,
+    'axes.titlesize': 11, 'axes.labelsize': 10,
     'axes.grid': True, 'grid.color': '#EEEEEE',
     'grid.linewidth': 0.8, 'figure.facecolor': 'white',
     'axes.facecolor': 'white',
@@ -17,206 +17,144 @@ rcParams.update({
 })
 
 MODES        = ['7W', '15W', '25W']
-COLORS       = ['#AEC6CF', '#B5EAD7', '#FFD1A9']
-STEADY_START = 300
+COLORS       = ['#AEC6CF', '#B5EAD7', '#FFD1A9'] # 7W (Mavi), 15W (Yeşil), 25W (Turuncu)
 LOG_DIR      = '/workspace/logs'
-OUT_PATH     = f'{LOG_DIR}/calibration_report_final.png'
-
 
 def load_csv(mode):
     path = f'{LOG_DIR}/calibration_data_{mode}.csv'
     if not os.path.exists(path):
         return None
-    data = []
-    with open(path) as f:
+    
+    data = {'elapsed_sec': [], 'cpu': [], 'ram_used': [], 'power_mw': [], 'temp': [], 'latency_ms': []}
+    
+    with open(path, 'r') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            d = {}
-            for k, v in row.items():
-                try:
-                    d[k] = float(v)
-                except (ValueError, TypeError):
-                    d[k] = v
-            data.append(d)
+            try:
+                data['elapsed_sec'].append(float(row['elapsed_sec']))
+                data['cpu'].append(float(row['cpu']))
+                data['ram_used'].append(float(row['ram_used']))
+                data['power_mw'].append(float(row['power_mw']))
+                data['temp'].append(float(row['temp']))
+                
+                lat = float(row['latency_ms']) if row['latency_ms'] and row['latency_ms'] != 'None' else 0.0
+                data['latency_ms'].append(lat)
+            except (ValueError, KeyError):
+                continue
+                
+    for k in data:
+        data[k] = np.array(data[k])
     return data
 
-
-def get_vals(data, key):
-    return [d[key] for d in data
-            if d.get(key) not in (None, '', 'None')
-            and not (isinstance(d[key], float) and np.isnan(d[key]))]
-
-
-
-def get_time_series(data, key):
-    times = []
-    vals = []
-    for d in data:
-        t = d.get('elapsed_sec')
-        v = d.get(key)
-        if t is not None and v not in (None, '', 'None') and not (isinstance(v, float) and np.isnan(v)):
-            times.append(float(t))
-            vals.append(float(v))
-    return times, vals
-
-
-
-def compute_cv(data, key):
-    steady = [d for d in data if float(d.get('elapsed_sec', 0)) >= STEADY_START]
-    vals   = get_vals(steady, key)
-    if len(vals) < 10:
-        return None, None, None
-    mean = np.mean(vals)
-    std  = np.std(vals)
-    cv   = std / mean if mean != 0 else 0
-    return cv, mean, std
-
-
-
-def sliding_cv(data, key, window_sec=60):
-    times, vals = get_time_series(data, key)
-    cv_times = []
-    cv_vals = []
-    for i in range(len(times)):
-        current_time = times[i]
-        if current_time < window_sec:
-            continue
-        window_data = [v for t, v in zip(times, vals) if current_time - window_sec <= t <= current_time]
-        if len(window_data) > 5:
-            m = np.mean(window_data)
-            s = np.std(window_data)
-            cv_times.append(current_time)
-            cv_vals.append((s / m * 100) if m != 0 else 0)
-    return cv_times, cv_vals
-
-
 def main():
-    missing = [f'{LOG_DIR}/calibration_data_{m}.csv'
-               for m in MODES
-               if not os.path.exists(f'{LOG_DIR}/calibration_data_{m}.csv')]
-    if missing:
-        print(f'Missing files: {missing}')
-        print('Run calibration_node for each power mode first.')
-        return
+    # ── Verileri Yükle ──
+    data_all = {mode: load_csv(mode) for mode in MODES}
 
-    all_data = {m: load_csv(m) for m in MODES}
+    # =========================================================================
+    # 1. BÖLÜM: SADE ÇİZGİ GRAFİKLERİ (calibration_graphs.png)
+    # =========================================================================
+    metrics_to_plot = [
+        ('cpu', 'CPU Usage (%)'),
+        ('ram_used', 'RAM Used (MB)'),
+        ('power_mw', 'Power (mW)'),
+        ('temp', 'Temperature (°C)'),
+        ('latency_ms', 'Latency (ms)')
+    ]
 
-    fig = plt.figure(figsize=(18, 18))
-    gs  = gridspec.GridSpec(4, len(MODES), figure=fig,
-                            hspace=0.6, wspace=0.35)
-    fig.suptitle(
-        'Calibration Report — Natural Variability Analysis\n'
-        'Jetson Orin Nano (7W, 15W, 25W — 10 minutes each)',
-        fontsize=13, fontweight='bold', y=1.01)
+    fig, axes = plt.subplots(5, 3, figsize=(15, 14), gridspec_kw={'hspace': 0.4, 'wspace': 0.3})
+    fig.suptitle('Hardware Calibration (Raw Metrics)', fontsize=16, fontweight='bold', y=0.95)
 
-    cvs_summary = {}
-
-    for mi, (mode, color) in enumerate(zip(MODES, COLORS)):
-        data = all_data[mode]
-
-        # ── CPU Timeline ── 
-        ax1 = fig.add_subplot(gs[0, mi])
-        t_cpu, v_cpu = get_time_series(data, 'cpu') 
-        ax1.plot(t_cpu, v_cpu, color=color, linewidth=0.8, alpha=0.8)
-        ax1.axvline(x=STEADY_START, color='gray', linestyle='--',
-                    linewidth=1, label='Steady-state start (300s)')
-        ax1.set_title(f'{mode} — CPU % Timeline', fontweight='bold')
-        ax1.set_xlabel('Time (s)')
-        ax1.set_ylabel('CPU %')
-        ax1.legend(fontsize=7)
-
-        # ── Sliding CV ── 
-        ax2 = fig.add_subplot(gs[1, mi])
-        t_cv, v_cv = sliding_cv(data, 'cpu', window_sec=60)
-        ax2.plot(t_cv, v_cv, color=color, linewidth=1.0)
-        ax2.set_title(f'{mode} — Sliding CV (60s window)', fontweight='bold')
-        ax2.set_xlabel('Time (s)')
-        ax2.set_ylabel('CV %')
-
-        # ── Latency Timeline 
-        ax3 = fig.add_subplot(gs[2, mi])
-        t_lat, v_lat = get_time_series(data, 'latency_ms')
-        if v_lat:
-            ax3.plot(t_lat, v_lat, color=color, linewidth=0.8, alpha=0.8)
-            ax3.axvline(x=STEADY_START, color='gray', linestyle='--',
-                        linewidth=1, label='Steady-state start (300s)')
-            ax3.legend(fontsize=7)
-        else:
-            ax3.text(0.5, 0.5, 'No latency data', transform=ax3.transAxes,
-                     ha='center', va='center', fontsize=9, color='gray')
-        ax3.set_title(f'{mode} — Pipeline Latency (ms)', fontweight='bold')
-        ax3.set_xlabel('Time (s)')
-        ax3.set_ylabel('ms')
-
+    for col_idx, mode in enumerate(MODES):
+        d = data_all[mode]
+        if d is None or len(d['elapsed_sec']) == 0:
+            continue
+            
+        time_sec = d['elapsed_sec']
+        color = COLORS[col_idx]
         
-        cv, mean, std = compute_cv(data, 'cpu')
+        for row_idx, (key, ylabel) in enumerate(metrics_to_plot):
+            ax = axes[row_idx, col_idx]
+            ax.plot(time_sec, d[key], color=color, linewidth=1.5)
+            ax.set_title(f'{mode} - {key.replace("_", " ").upper()}', fontweight='bold')
+            ax.set_xlabel('Time (s)')
+            ax.set_ylabel(ylabel)
+            
+            # Gecikme grafiğinde çok uç değerler grafiği bozmasın diye %99'luk limiti alıyoruz
+            if key == 'latency_ms' and len(d[key]) > 0:
+                y_max = np.percentile(d[key], 99) * 1.2
+                if y_max > 0: ax.set_ylim(0, y_max)
+
+    graphs_path = f'{LOG_DIR}/calibration_graphs.png'
+    plt.savefig(graphs_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # =========================================================================
+    # 2. BÖLÜM: SADE VE DETAYLI İSTATİSTİK TABLOSU (calibration_table.png)
+    # =========================================================================
+    metrics_for_table = [
+        ('cpu', 'CPU', '%', '.2f'),
+        ('ram_used', 'RAM', 'MB', '.0f'),
+        ('power_mw', 'Power', 'mW', '.0f'),
+        ('temp', 'Temp', '°C', '.2f'),
+        ('latency_ms', 'Latency', 'ms', '.2f')
+    ]
+
+    tdata = []
+    row_labels = []
+
+    # Her metrik için Mean, Std, CV hesapla
+    for key, name, unit, fmt in metrics_for_table:
+        r_mean, r_std, r_cv = [], [], []
         
-        steady_data = [d for d in data if float(d.get('elapsed_sec', 0)) >= STEADY_START]
-        lat_vals_steady = get_vals(steady_data, 'latency_ms')
-        
-        lat_mean = np.mean(lat_vals_steady) if lat_vals_steady else None
-        lat_std  = np.std(lat_vals_steady)  if lat_vals_steady else None
-        lat_cv   = (lat_std / lat_mean * 100) if (lat_mean and lat_mean != 0) else None
-
-        cvs_summary[mode] = {
-            'cv': cv, 'mean': mean, 'std': std,
-            'lat_mean': lat_mean, 'lat_std': lat_std, 'lat_cv': lat_cv
-        }
-        print(f'[{mode}] CPU CV: {cv*100:.2f}% | Latency mean: {lat_mean:.2f}ms' if cv and lat_mean else f'[{mode}] insufficient data')
-
-    # ── Summary table ──
-    ax4 = fig.add_subplot(gs[3, :])
-    ax4.axis('off')
-    ax4.set_title(
-        'Calibration Summary — Steady-State Natural Variability',
-        fontweight='bold', fontsize=9, pad=15)
-
-    metrics = ['CPU Mean %', 'CPU Std %', 'CPU CV %',
-               'Latency Mean (ms)', 'Latency Std (ms)', 'Latency CV %']
-    tdata   = []
-    for m in metrics:
-        row = []
         for mode in MODES:
-            s = cvs_summary[mode]
-            if m == 'CPU Mean %':
-                row.append(f"{s['mean']:.2f}" if s['mean'] else 'N/A')
-            elif m == 'CPU Std %':
-                row.append(f"{s['std']:.2f}" if s['std'] else 'N/A')
-            elif m == 'CPU CV %':
-                row.append(f"{s['cv']*100:.2f}" if s['cv'] else 'N/A')
-            elif m == 'Latency Mean (ms)':
-                row.append(f"{s['lat_mean']:.2f}" if s['lat_mean'] else 'N/A')
-            elif m == 'Latency Std (ms)':
-                row.append(f"{s['lat_std']:.2f}" if s['lat_std'] else 'N/A')
-            elif m == 'Latency CV %':
-                row.append(f"{s['lat_cv']:.2f}" if s['lat_cv'] else 'N/A')
-        tdata.append(row)
+            d = data_all[mode]
+            if d is not None and len(d['elapsed_sec']) > 0:
+                steady_idx = d['elapsed_sec'] >= 300
+                if np.any(steady_idx):
+                    arr = d[key][steady_idx]
+                    mean_val = np.mean(arr)
+                    std_val = np.std(arr)
+                    cv_val = (std_val / mean_val * 100) if mean_val > 0 else 0
+                    
+                    r_mean.append(format(mean_val, fmt))
+                    r_std.append(format(std_val, fmt))
+                    r_cv.append(f"{cv_val:.2f}")
+                else:
+                    r_mean.append("N/A"); r_std.append("N/A"); r_cv.append("N/A")
+            else:
+                r_mean.append("N/A"); r_std.append("N/A"); r_cv.append("N/A")
 
-    cell_colors = [['#FFFFFF'] * len(MODES) for _ in metrics]
+        tdata.extend([r_mean, r_std, r_cv])
+        row_labels.extend([f'{name} Mean ({unit})', f'{name} Std ({unit})', f'{name} CV (%)'])
 
-    tbl = ax4.table(
-        cellText    = tdata,
-        rowLabels   = metrics,
-        colLabels   = MODES,
-        cellLoc     = 'center',
-        loc         = 'center',
-        cellColours = cell_colors)
+    # Tabloyu Çizdir
+    fig_tb, ax_tb = plt.subplots(figsize=(8, 8))
+    ax_tb.axis('off')
+
+    # Senin attığın ekran görüntüsündeki gibi rowLabels kullanarak sol tarafı gölgeli yapıyoruz
+    tbl = ax_tb.table(
+        cellText=tdata,
+        rowLabels=row_labels,
+        colLabels=MODES,
+        cellLoc='center',
+        loc='center',
+        bbox=[0.3, 0, 0.7, 1] # Tablonun ekrana oturma alanı
+    )
+    
     tbl.auto_set_font_size(False)
-    tbl.set_fontsize(9)
-    tbl.scale(1, 2.0)
-
+    tbl.set_fontsize(10)
+    
+    # Başlıkların kalın olması için
     for (r, c), cell in tbl.get_celld().items():
-        cell.set_edgecolor('#CCCCCC')
-        if r == 0:
-            cell.set_facecolor('#E8F0FE')
-            cell.set_text_props(fontweight='bold')
-        if c == -1:
-            cell.set_facecolor('#F5F5F5')
+        if r == 0 or c == -1:
             cell.set_text_props(fontweight='bold')
 
-    plt.savefig(OUT_PATH, dpi=150, bbox_inches='tight', facecolor='white')
-    print(f'Final report saved: {OUT_PATH}')
+    table_path = f'{LOG_DIR}/calibration_table.png'
+    plt.savefig(table_path, dpi=300, bbox_inches='tight')
+    plt.close()
 
+    print(f"[BAŞARILI] Grafikler oluşturuldu: {graphs_path}")
+    print(f"[BAŞARILI] Tablo oluşturuldu: {table_path}")
 
 if __name__ == '__main__':
     main()

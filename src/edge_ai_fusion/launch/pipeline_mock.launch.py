@@ -86,27 +86,6 @@ def generate_launch_description():
             output='screen',
         ),
 
-        Node(
-            package='edge_ai_fusion',
-            executable='power_benchmark_node',
-            name='power_benchmark_node',
-            output='screen',
-        ),
-
-        # ── UTILITIES ─────────────────────────────────────────────────────────
-        Node(
-            package='edge_ai_fusion',
-            executable='resolution_node',
-            name='resolution_node',
-            output='screen',
-        ),
-
-        Node(
-            package='edge_ai_fusion',
-            executable='calibration_node',
-            name='calibration_node',
-            output='screen',
-        ),
         ExecuteProcess(
             cmd=['rqt'],
             output='screen',
