@@ -5,7 +5,7 @@ import numpy as np
 import csv
 import os
 from datetime import datetime
-from edge_ai_interfaces.msg import Latency
+from edge_ai_interfaces.msg import DecisionResult 
 
 STABILITY_THRESHOLD = 0.08
 MEASURE_SEC         = 60
@@ -24,8 +24,10 @@ class PowerBenchmarkNode(Node):
 
         self.subscription = self.create_subscription(
             DiagnosticArray, '/system_monitor', self.monitor_cb, 10)
+        
+        
         self.latency_sub  = self.create_subscription(
-            Latency, '/decision/latency_detail', self.latency_cb, 10)
+            DecisionResult, '/decision/latency_detail', self.latency_cb, 10)
 
         self.latest_latency = {
             'acq_ms': None, 'process_ms': None,
@@ -55,13 +57,25 @@ class PowerBenchmarkNode(Node):
         if self.phase != 'idle':
             self.current_data.append(data)
 
-    def latency_cb(self, msg: Latency):
+    
+    def _to_ns(self, stamp):
+        return stamp.sec * 1_000_000_000 + stamp.nanosec
+
+    
+    def latency_cb(self, msg: DecisionResult):
+        t_cap_ns  = self._to_ns(msg.header.stamp)
+        t_fin_ns  = self._to_ns(msg.t_fusion_in)
+        t_fout_ns = self._to_ns(msg.t_fusion_out)
+        t_din_ns  = self._to_ns(msg.t_decision_in)
+        t_dout_ns = self._to_ns(msg.t_decision_out)
+
         self.latest_latency = {
-            'acq_ms'      : msg.acq_ms,
-            'process_ms'  : msg.process_ms,
-            'transport_ms': msg.transport_ms,
-            'decision_ms' : msg.decision_ms,
-            'e2e_ms'      : msg.e2e_ms}
+            'acq_ms'      : round((t_fin_ns - t_cap_ns) / 1e6, 2),
+            'process_ms'  : round((t_fout_ns - t_fin_ns) / 1e6, 2),
+            'transport_ms': round((t_din_ns - t_fout_ns) / 1e6, 2),
+            'decision_ms' : round((t_dout_ns - t_din_ns) / 1e6, 2),
+            'e2e_ms'      : round((t_dout_ns - t_cap_ns) / 1e6, 2)
+        }
 
     def get_vals(self, data, key):
         return [d[key] for d in data if d.get(key) is not None]

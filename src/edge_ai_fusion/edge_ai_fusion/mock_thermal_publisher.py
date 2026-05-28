@@ -16,9 +16,10 @@ class MockThermalPublisher(Node):
 
     def publish_frame(self):
         msg = Image()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'thermal_frame'
-
+        t_capture = self.get_clock().now().to_msg()
+        
+        msg.header.stamp = t_capture
+        msg.header.frame_id = 'thermal_camera'
         # Resolution: 256x192 - UNI-T
         msg.height = 192
         msg.width = 256

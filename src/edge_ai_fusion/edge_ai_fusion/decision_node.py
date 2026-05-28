@@ -1,8 +1,8 @@
 import rclpy
 from rclpy.node import Node
-from edge_ai_interfaces.msg import FusedData, Latency
+from edge_ai_interfaces.msg import FusedData, DecisionResult
 from sensor_msgs.msg import Image
-from std_msgs.msg import String, Float32
+from std_msgs.msg import String 
 import numpy as np
 import csv
 import os
@@ -23,6 +23,9 @@ DEPTH_MAX_VALID   = 1500
 CSV_PATH    = '/workspace/logs/decision_log.csv'
 BITMAP_PATH = '/workspace/logs/thermal_bitmap_latest.png'
 
+# Yardımcı fonksiyon
+def _to_ns(stamp):
+    return stamp.sec * 1_000_000_000 + stamp.nanosec
 
 class DecisionNode(Node):
     def __init__(self):
@@ -34,8 +37,9 @@ class DecisionNode(Node):
             FusedData, '/fused/output_v2', self.decision_callback, 10)
         self.bitmap_pub  = self.create_publisher(Image,   '/decision/thermal_bitmap', 10)
         self.alert_pub   = self.create_publisher(String,  '/decision/alert',          10)
-        self.latency_detail_pub = self.create_publisher(
-            Latency, '/decision/latency_detail', 10)
+        
+        
+        self.latency_detail_pub = self.create_publisher(DecisionResult, '/decision/latency_detail', 10)
 
         self.previous_regions = {}
 
@@ -103,18 +107,13 @@ class DecisionNode(Node):
         return False
 
     def decision_callback(self, fused_msg: FusedData):
+        # Latency başlangıcı
+        t_decision_in = self.get_clock().now()
 
-        # --- Latency: fusion → decision ---
-        fusion_stamp_ns = (
-            fused_msg.header.stamp.sec * 1_000_000_000 +
-            fused_msg.header.stamp.nanosec)
-        now_ns = self.get_clock().now().nanoseconds
-        latency_ms = (now_ns - fusion_stamp_ns) / 1_000_000.0
-
-        # --- 1. THERMAL ARRAY ---
+        # --- 2. THERMAL ARRAY ---
         thermal_array = self.bridge.imgmsg_to_cv2(fused_msg.thermal, desired_encoding='32FC1')
 
-        # --- 2. THERMAL BITMAP ---
+        # --- 3. THERMAL BITMAP ---
         bitmap = np.zeros_like(thermal_array, dtype=np.uint8)
         bitmap[thermal_array > THERMAL_HOT]       = 1
         bitmap[thermal_array > THERMAL_DANGEROUS] = 2
@@ -133,7 +132,7 @@ class DecisionNode(Node):
         bitmap_msg.data     = bitmap_color.tobytes()
         self.bitmap_pub.publish(bitmap_msg)
 
-        # --- 5. HER 20 SANİYEDE BİR PNG KAYDETME ---
+        # --- 4. HER 20 SANİYEDE BİR PNG KAYDETME ---
         current_time = self.get_clock().now()
         if (current_time - self.last_bitmap_time).nanoseconds > 20 * 1e9:
             scale_factor = 4
@@ -145,30 +144,35 @@ class DecisionNode(Node):
             self.get_logger().info(f'Periodic analysis saved: {file_path}')
             self.last_bitmap_time = current_time
 
-        # --- 4. DEPTH ARRAY ---
+        # --- 5. DEPTH ARRAY ---
         depth_raw = self.bridge.imgmsg_to_cv2(fused_msg.depth, desired_encoding='16UC1')
         depth_array = cv2.resize(
             depth_raw,
             (bitmap.shape[1], bitmap.shape[0]),
             interpolation=cv2.INTER_NEAREST)
 
-        # --- 5. CONNECTED COMPONENTS ---
+        # --- 6. CONNECTED COMPONENTS ---
         dangerous_regions = self.process_regions(
             bitmap == 2, depth_array, 'CRITICAL', 'DANGEROUS region')
         hot_regions = self.process_regions(
             bitmap == 1, depth_array, 'WARNING', 'HOT region')
         all_regions = dangerous_regions + hot_regions
 
-        # --- 6. PUBLISH ALERT ---
+        # Durumu kaydedeceğimiz değişken
+        current_alert_status = 'SAFE'
+
+        # --- 7. PUBLISH ALERT ---
         if not all_regions:
             alert_msg      = String()
             alert_msg.data = 'SAFE'
             self.alert_pub.publish(alert_msg)
             self.get_logger().info('SAFE')
             self.previous_regions = {}
+            current_alert_status = 'SAFE'
         else:
             top_alert = 'CRITICAL' if any(
                 r['alert_type'] == 'CRITICAL' for r in all_regions) else 'WARNING'
+            current_alert_status = top_alert
             alert_msg      = String()
             alert_msg.data = f'{top_alert} | {len(all_regions)} regions detected'
             self.alert_pub.publish(alert_msg)
@@ -198,51 +202,30 @@ class DecisionNode(Node):
                 k: v for k, v in self.previous_regions.items()
                 if k in current_region_ids}
 
-        # --- 7. PUBLISH LATENCY ---
-        # t_decision_in: callback'e giriş
-        t_decision_in = self.get_clock().now()
-
-        # ... mevcut tüm işlemler aynı kalıyor ...
-
-        # alert publish'ten sonra:
+        # --- 8. KARAR ÇIKIŞ  
         t_decision_out = self.get_clock().now()
 
-        @staticmethod
-        def _to_ns(stamp):
-            return stamp.sec * 1_000_000_000 + stamp.nanosec
+        #  LATENCY 
+        
+        res_msg = DecisionResult()
+      
+        res_msg.header.stamp = fused_msg.header.stamp
+        res_msg.alert_type   = current_alert_status
+        
+       
+        res_msg.t_fusion_in  = fused_msg.t_fusion_in
+        res_msg.t_fusion_out = fused_msg.t_fusion_out
+        res_msg.t_decision_in  = t_decision_in.to_msg()
+        res_msg.t_decision_out = t_decision_out.to_msg()
+        
+        self.latency_detail_pub.publish(res_msg)
 
-        t_cap_ns   = self._to_ns(fused_msg.t_capture)
-        t_fin_ns   = self._to_ns(fused_msg.t_fusion_in)
-        t_fout_ns  = self._to_ns(fused_msg.t_fusion_out)
-        t_din_ns   = t_decision_in.nanoseconds
-        t_dout_ns  = t_decision_out.nanoseconds
-
-        acq_ms      = (t_fin_ns  - t_cap_ns)  / 1e6
-        process_ms  = (t_fout_ns - t_fin_ns)  / 1e6
-        transport_ms= (t_din_ns  - t_fout_ns) / 1e6
-        decision_ms = (t_dout_ns - t_din_ns)  / 1e6
-        e2e_ms      = (t_dout_ns - t_cap_ns)  / 1e6
-
-        self.get_logger().info(
-            f'[LAT] acq={acq_ms:.1f} process={process_ms:.1f} '
-            f'transport={transport_ms:.1f} decision={decision_ms:.1f} '
-            f'E2E={e2e_ms:.1f} ms')
-
-        # Float32 — e2e (calibration_node için)
-        latency_msg      = Float32()
-        latency_msg.data = float(e2e_ms)
-        self.latency_pub.publish(latency_msg)
-
-        # Latency.msg — tüm aşamalar (power_benchmark için)
-        lat_detail              = Latency()
-        lat_detail.header.stamp = self.get_clock().now().to_msg()
-        lat_detail.frame_seq    = fused_msg.frame_seq
-        lat_detail.acq_ms       = float(acq_ms)
-        lat_detail.process_ms   = float(process_ms)
-        lat_detail.transport_ms = float(transport_ms)
-        lat_detail.decision_ms  = float(decision_ms)
-        lat_detail.e2e_ms       = float(e2e_ms)
-        self.latency_detail_pub.publish(lat_detail)
+        #  End-to-End hesaplaması
+        t_cap_ns = fused_msg.header.stamp.sec * 1_000_000_000 + fused_msg.header.stamp.nanosec
+        t_dout_ns = t_decision_out.nanoseconds
+        e2e_ms = (t_dout_ns - t_cap_ns) / 1_000_000.0
+        
+        self.get_logger().info(f'[LATENCY] E2E: {e2e_ms:.2f} ms | Alert: {current_alert_status}')
 
     def destroy_node(self):
         self.csv_file.close()

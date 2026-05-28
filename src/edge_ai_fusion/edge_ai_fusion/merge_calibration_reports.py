@@ -47,8 +47,22 @@ def get_vals(data, key):
             and not (isinstance(d[key], float) and np.isnan(d[key]))]
 
 
+
+def get_time_series(data, key):
+    times = []
+    vals = []
+    for d in data:
+        t = d.get('elapsed_sec')
+        v = d.get(key)
+        if t is not None and v not in (None, '', 'None') and not (isinstance(v, float) and np.isnan(v)):
+            times.append(float(t))
+            vals.append(float(v))
+    return times, vals
+
+
+
 def compute_cv(data, key):
-    steady = [d for i, d in enumerate(data) if i >= STEADY_START]
+    steady = [d for d in data if float(d.get('elapsed_sec', 0)) >= STEADY_START]
     vals   = get_vals(steady, key)
     if len(vals) < 10:
         return None, None, None
@@ -58,15 +72,22 @@ def compute_cv(data, key):
     return cv, mean, std
 
 
-def sliding_cv(data, key, window=60):
-    vals = get_vals(data, key)
-    cvs  = []
-    for i in range(window, len(vals)):
-        w    = vals[i-window:i]
-        mean = np.mean(w)
-        std  = np.std(w)
-        cvs.append(std / mean * 100 if mean != 0 else 0)
-    return cvs
+
+def sliding_cv(data, key, window_sec=60):
+    times, vals = get_time_series(data, key)
+    cv_times = []
+    cv_vals = []
+    for i in range(len(times)):
+        current_time = times[i]
+        if current_time < window_sec:
+            continue
+        window_data = [v for t, v in zip(times, vals) if current_time - window_sec <= t <= current_time]
+        if len(window_data) > 5:
+            m = np.mean(window_data)
+            s = np.std(window_data)
+            cv_times.append(current_time)
+            cv_vals.append((s / m * 100) if m != 0 else 0)
+    return cv_times, cv_vals
 
 
 def main():
@@ -93,32 +114,32 @@ def main():
     for mi, (mode, color) in enumerate(zip(MODES, COLORS)):
         data = all_data[mode]
 
-        # ── CPU Timeline ──
+        # ── CPU Timeline ── 
         ax1 = fig.add_subplot(gs[0, mi])
-        cpu_vals = get_vals(data, 'cpu')
-        ax1.plot(cpu_vals, color=color, linewidth=0.8, alpha=0.8)
+        t_cpu, v_cpu = get_time_series(data, 'cpu') 
+        ax1.plot(t_cpu, v_cpu, color=color, linewidth=0.8, alpha=0.8)
         ax1.axvline(x=STEADY_START, color='gray', linestyle='--',
-                    linewidth=1, label='Steady-state start')
+                    linewidth=1, label='Steady-state start (300s)')
         ax1.set_title(f'{mode} — CPU % Timeline', fontweight='bold')
         ax1.set_xlabel('Time (s)')
         ax1.set_ylabel('CPU %')
         ax1.legend(fontsize=7)
 
-        # ── Sliding CV ──
+        # ── Sliding CV ── 
         ax2 = fig.add_subplot(gs[1, mi])
-        sliding = sliding_cv(data, 'cpu')
-        ax2.plot(sliding, color=color, linewidth=1.0)
+        t_cv, v_cv = sliding_cv(data, 'cpu', window_sec=60)
+        ax2.plot(t_cv, v_cv, color=color, linewidth=1.0)
         ax2.set_title(f'{mode} — Sliding CV (60s window)', fontweight='bold')
         ax2.set_xlabel('Time (s)')
         ax2.set_ylabel('CV %')
 
-        # ── Latency Timeline ──
+        # ── Latency Timeline 
         ax3 = fig.add_subplot(gs[2, mi])
-        latency_vals = get_vals(data, 'latency_ms')
-        if latency_vals:
-            ax3.plot(latency_vals, color=color, linewidth=0.8, alpha=0.8)
+        t_lat, v_lat = get_time_series(data, 'latency_ms')
+        if v_lat:
+            ax3.plot(t_lat, v_lat, color=color, linewidth=0.8, alpha=0.8)
             ax3.axvline(x=STEADY_START, color='gray', linestyle='--',
-                        linewidth=1, label='Steady-state start')
+                        linewidth=1, label='Steady-state start (300s)')
             ax3.legend(fontsize=7)
         else:
             ax3.text(0.5, 0.5, 'No latency data', transform=ax3.transAxes,
@@ -127,9 +148,12 @@ def main():
         ax3.set_xlabel('Time (s)')
         ax3.set_ylabel('ms')
 
+        
         cv, mean, std = compute_cv(data, 'cpu')
-        lat_vals_steady = get_vals(
-            [d for i, d in enumerate(data) if i >= STEADY_START], 'latency_ms')
+        
+        steady_data = [d for d in data if float(d.get('elapsed_sec', 0)) >= STEADY_START]
+        lat_vals_steady = get_vals(steady_data, 'latency_ms')
+        
         lat_mean = np.mean(lat_vals_steady) if lat_vals_steady else None
         lat_std  = np.std(lat_vals_steady)  if lat_vals_steady else None
         lat_cv   = (lat_std / lat_mean * 100) if (lat_mean and lat_mean != 0) else None

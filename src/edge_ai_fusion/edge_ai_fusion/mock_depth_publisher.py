@@ -15,9 +15,11 @@ class MockDepthPublisher(Node):
         self.get_logger().info('MockDepthPublisher started.')
 
     def publish_frame(self):
-        msg = Image()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'depth_frame'
+        msg = Image()   
+        t_capture = self.get_clock().now().to_msg()
+        
+        msg.header.stamp = t_capture
+        msg.header.frame_id = 'depth_camera' 
 
         # Resolution: 1280x720 — Intel RealSense D435 Product Brief (Intel, 2023)
         msg.height = 720

@@ -37,6 +37,8 @@ setup(
              'diagnostics_node = edge_ai_fusion.diagnostics_node:main',
              'merge_calibration_reports = edge_ai_fusion.merge_calibration_reports:main',
              'merge_power_reports = edge_ai_fusion.merge_power_reports:main',
+             'benchmark_recorder = edge_ai_fusion.benchmark_recorder_node:main',
+             'analyze_latency = edge_ai_fusion.analyze_latency:main',
         ],
     },
 )

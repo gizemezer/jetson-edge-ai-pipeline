@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from diagnostic_msgs.msg import DiagnosticArray
-from std_msgs.msg import Float32
+from edge_ai_interfaces.msg import DecisionResult # Yeni mesaj tipimiz eklendi
 import os
 import csv
 from datetime import datetime
@@ -22,8 +22,10 @@ class CalibrationNode(Node):
 
         self.subscription = self.create_subscription(
             DiagnosticArray, '/system_monitor', self.monitor_cb, 10)
+        
+        # Aboneliği yeni kanal ve mesaja göre güncelledik
         self.latency_sub = self.create_subscription(
-            Float32, '/decision/latency', self.latency_cb, 10)
+            DecisionResult, '/decision/latency_detail', self.latency_cb, 10)
 
         self.current_data  = []
         self.latest_latency = None
@@ -49,8 +51,15 @@ class CalibrationNode(Node):
         if self.started:
             self.current_data.append(data)
 
-    def latency_cb(self, msg):
-        self.latest_latency = msg.data
+    def latency_cb(self, msg: DecisionResult):
+        # Uçtan uca (End-to-End) gecikme hesabını burada yapıyoruz
+        t_cap_ns  = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+        t_dout_ns = msg.t_decision_out.sec * 1_000_000_000 + msg.t_decision_out.nanosec
+        
+        e2e_ms = (t_dout_ns - t_cap_ns) / 1_000_000.0
+        
+        # Son değeri güncelle
+        self.latest_latency = round(e2e_ms, 2)
 
     def run_calibration(self):
         if not self.started:

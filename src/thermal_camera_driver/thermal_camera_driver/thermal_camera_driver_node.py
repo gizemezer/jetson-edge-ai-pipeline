@@ -27,13 +27,16 @@ class ThermalCameraDriver(Node):
         self.timer = self.create_timer(0.04, self.publish_frame)
         self.get_logger().info(f'Thermal Camera Driver started on {device_path}!')
 
+        
     def publish_frame(self):
         ret, frame = self.cap.read()
         if not ret:
             self.get_logger().error('Failed to capture frame!')
             return
             
+        # 1. VERİ OKUNDUĞU AN ZAMANI AL (t_capture)
         t_capture = self.get_clock().now().to_msg()
+        
         # Üst yarı: Renkli görsel verinin Y kanalı (Gri tonlama)
         top_y = frame[0:192, :, 0]
         top_bgr = cv2.cvtColor(top_y, cv2.COLOR_GRAY2BGR)
@@ -42,15 +45,15 @@ class ThermalCameraDriver(Node):
         bottom_half = frame[192:384, :, :]
         raw16 = np.ascontiguousarray(bottom_half).view(np.uint16).reshape(192, 256)
         
-        stamp = self.get_clock().now().to_msg()
+        # (Aşağıdaki stamp satırını sildik, yerine t_capture kullanacağız)
         
         visual_msg = self.bridge.cv2_to_imgmsg(top_bgr, encoding='bgr8')
-        visual_msg.header.stamp = stamp
+        visual_msg.header.stamp = t_capture 
         visual_msg.header.frame_id = 'thermal_camera'
         self.publisher_.publish(visual_msg)
         
         raw16_msg = self.bridge.cv2_to_imgmsg(raw16, encoding='mono16')
-        raw16_msg.header.stamp = stamp
+        raw16_msg.header.stamp = t_capture 
         raw16_msg.header.frame_id = 'thermal_camera'
         self.raw_publisher.publish(raw16_msg)
 
