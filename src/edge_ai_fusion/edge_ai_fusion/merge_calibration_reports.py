@@ -25,7 +25,8 @@ def load_csv(mode):
     if not os.path.exists(path):
         return None
     
-    data = {'elapsed_sec': [], 'cpu': [], 'ram_used': [], 'power_mw': [], 'temp': [], 'latency_ms': []}
+    # Hem GPU hem de Latency var
+    data = {'elapsed_sec': [], 'cpu': [], 'gpu': [], 'ram_used': [], 'power_mw': [], 'temp': [], 'latency_ms': []}
     
     with open(path, 'r') as f:
         reader = csv.DictReader(f)
@@ -33,6 +34,7 @@ def load_csv(mode):
             try:
                 data['elapsed_sec'].append(float(row['elapsed_sec']))
                 data['cpu'].append(float(row['cpu']))
+                data['gpu'].append(float(row['gpu']))
                 data['ram_used'].append(float(row['ram_used']))
                 data['power_mw'].append(float(row['power_mw']))
                 data['temp'].append(float(row['temp']))
@@ -55,14 +57,16 @@ def main():
     # =========================================================================
     metrics_to_plot = [
         ('cpu', 'CPU Usage (%)'),
+        ('gpu', 'GPU Usage (%)'),
         ('ram_used', 'RAM Used (MB)'),
         ('power_mw', 'Power (mW)'),
         ('temp', 'Temperature (°C)'),
         ('latency_ms', 'Latency (ms)')
     ]
 
-    fig, axes = plt.subplots(5, 3, figsize=(15, 14), gridspec_kw={'hspace': 0.4, 'wspace': 0.3})
-    fig.suptitle('Hardware Calibration (Raw Metrics)', fontsize=16, fontweight='bold', y=0.95)
+    # 6 Metrik olduğu için satır sayısını (6, 3) yaptık ve boyunu (16) uzattık
+    fig, axes = plt.subplots(6, 3, figsize=(15, 17), gridspec_kw={'hspace': 0.45, 'wspace': 0.3})
+    fig.suptitle('Hardware Calibration (Raw Metrics)', fontsize=16, fontweight='bold', y=0.93)
 
     for col_idx, mode in enumerate(MODES):
         d = data_all[mode]
@@ -93,6 +97,7 @@ def main():
     # =========================================================================
     metrics_for_table = [
         ('cpu', 'CPU', '%', '.2f'),
+        ('gpu', 'GPU', '%', '.2f'),
         ('ram_used', 'RAM', 'MB', '.0f'),
         ('power_mw', 'Power', 'mW', '.0f'),
         ('temp', 'Temp', '°C', '.2f'),
@@ -127,18 +132,17 @@ def main():
         tdata.extend([r_mean, r_std, r_cv])
         row_labels.extend([f'{name} Mean ({unit})', f'{name} Std ({unit})', f'{name} CV (%)'])
 
-    # Tabloyu Çizdir
-    fig_tb, ax_tb = plt.subplots(figsize=(8, 8))
+    # 18 satır (6 metrik * 3) olacağı için tablonun dikey boyutunu (11) uzattık
+    fig_tb, ax_tb = plt.subplots(figsize=(8, 11))
     ax_tb.axis('off')
 
-    # Senin attığın ekran görüntüsündeki gibi rowLabels kullanarak sol tarafı gölgeli yapıyoruz
     tbl = ax_tb.table(
         cellText=tdata,
         rowLabels=row_labels,
         colLabels=MODES,
         cellLoc='center',
         loc='center',
-        bbox=[0.3, 0, 0.7, 1] # Tablonun ekrana oturma alanı
+        bbox=[0.3, 0, 0.7, 1] 
     )
     
     tbl.auto_set_font_size(False)
